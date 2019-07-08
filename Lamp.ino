@@ -1,17 +1,9 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <FastLED.h>
-#include <EEPROM.h>
 #include "credentials.h"
+#include "Ledstrip.h"
 
-#define EEPROM_SIZE 1
 #define DEBUG_PRINT 1
-
-// How many leds in your strip?
-#define NUM_LEDS 240
-#define DATA_PIN 13
-// Define the array of leds
-CRGB leds[NUM_LEDS];
 
 unsigned long previousMillis = 0;        // will store last time LED was updated
 const long interval = 10;
@@ -19,16 +11,19 @@ const long interval = 10;
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWD;
 const char* mqtt_server = MQTT_SERVER;
+uint8_t i = 1;
 WiFiClient espClient;
 PubSubClient client(espClient);
-long lastMsg = 0;
-char msg[50];
-int value = 0;
-boolean power = false;
-static uint8_t hue = 0;
-int i = 0;
 
-boolean forward = false;
+int red, green, blue = 0;
+
+enum Scenes {
+  Solid,
+  Goodnight,
+  Evening
+};
+
+Scenes currentScene = Goodnight;
 
 void setup_wifi() {
 
@@ -43,63 +38,13 @@ void setup_wifi() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+
   }
 
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-}
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  String message;
-  Serial.println("Message arrived");
-   Serial.print(topic);
-    Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-      Serial.print((char)payload[i]);
-    message += (char)payload[i];
-  }
-   Serial.println();
-  Serial.println(message);
-  if (!strcmp(message.c_str(), "1")) {
-    power = true;
-    EEPROM.write(0, power);
-  }
-  if (!strcmp(message.c_str(), "0")) {
-    power = false;
-    EEPROM.write(0, power);
-  }
-  if (!strcmp(topic, "color")) Serial.println("color");
-
-  EEPROM.commit();
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-
-    // Attempt to connect
-    if (client.connect("client")) {
-      Serial.println("connected");
-      // ... and resubscribe
-      client.subscribe("power");
-      client.subscribe("color");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      power = false;
-      for (int j = 0; j < NUM_LEDS; j++) {
-        leds[j] = CHSV(0, 0, 0);
-      }
-      FastLED.show();
-      ESP.restart();
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
 }
 
 void setup() {
@@ -110,52 +55,104 @@ void setup() {
   // Disable SD SPI
   pinMode(4, OUTPUT);
   digitalWrite(4, HIGH);
-
   setup_wifi();
+
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
-
-  LEDS.addLeds<WS2812B, DATA_PIN, RGB>(leds, NUM_LEDS);
-  LEDS.setBrightness(50);
-
-  EEPROM.begin(EEPROM_SIZE);
-  power = EEPROM.read(0);
-  power ? Serial.println("AAAAAAN") : Serial.println("UUUIIIITTTT");
-}
-
-void fadeall() {
-  for (int j = 0; j < NUM_LEDS; j++) {
-    leds[j].nscale8(250);
-  }
+  setupLedstrip();
 }
 
 void loop() {
   unsigned long currentMillis = millis();
 
   if (currentMillis - previousMillis >= interval) {
-    // save the last time you blinked the LED
     previousMillis = currentMillis;
 
-    fadeall();
-    if (power)
-    {
-      leds[i] = CHSV(hue++, 255, 255);
-    }
-    else
-    {
-      leds[i] = CHSV(0, 0, 0);
-    }
-    FastLED.show();
-
-    if (forward) i--;
-    else i++;
-
-    if (i >= NUM_LEDS) forward = true;
-    if (i <= 0) forward = false;
     if (!client.connected()) {
       reconnect();
     }
+
+    switch (currentScene)
+    {
+      case Solid:
+        setRGBLedstrip(red,green,blue);
+        break;
+      case Goodnight:
+        powerOffLedstrip();
+        break;
+      case Evening:
+        setRGBLedstrip(55, 55, 55);
+        break;
+    }
+    //    setRedValue(5, i);
+    //    setGreenValue(6, i);
+    //    setBlueValue(7, i);
+    
+    //    i += 5;
+
+
     client.loop();
   }
+}
 
+
+
+//*********************************************************
+//                         MQTT
+//*********************************************************
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // ... and resubscribe
+      client.subscribe("scenes");
+      client.subscribe("brightness");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+    }
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message;
+//  Serial.print("Message arrived [");
+//  Serial.print(topic);
+//  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+//    Serial.print((char)payload[i]);
+    message += (char)payload[i];
+  }
+//  Serial.println();
+//  Serial.println(message);
+  if (!strcmp(message.c_str(), "Solid color")) {
+    client.subscribe("Color");
+    Serial.println("Solid Color");
+    currentScene = Solid;
+  }
+  if (!strcmp(message.c_str(), "Evening")) {
+    client.unsubscribe("Color");
+    Serial.println("Evening");
+    currentScene = Evening;
+  }
+  if (!strcmp(topic, "Color")) {
+    sscanf(message.c_str(), "%d %d %d", &red, &green, &blue);
+    Serial.print(red);
+    Serial.print(" ");
+    Serial.print(green);
+    Serial.print(" ");
+    Serial.println(green);
+  }
+  if (!strcmp(message.c_str(), "Good night")) {
+    client.unsubscribe("Color");
+    Serial.println("Good night");
+    currentScene = Goodnight;
+  }
 }
