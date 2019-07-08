@@ -2,6 +2,7 @@
 #include <PubSubClient.h>
 #include <FastLED.h>
 #include <EEPROM.h>
+#include "credentials.h"
 
 #define EEPROM_SIZE 1
 #define DEBUG_PRINT 1
@@ -15,9 +16,9 @@ CRGB leds[NUM_LEDS];
 unsigned long previousMillis = 0;        // will store last time LED was updated
 const long interval = 10;
 
-const char* ssid = "KoensHotspot";
-const char* password = "koen2008";
-const char* mqtt_server = "192.168.43.76";
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWD;
+const char* mqtt_server = MQTT_SERVER;
 WiFiClient espClient;
 PubSubClient client(espClient);
 long lastMsg = 0;
